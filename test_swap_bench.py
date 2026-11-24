@@ -48,7 +48,7 @@ class SwapBenchTests(unittest.TestCase):
             {"target_sat": True, "notes": [], "keysets_ppk": {"A": 0}},
             {"target_sat": 1, "notes": [], "keysets_ppk": {"A": -1}},
             {"target_sat": 1, "notes": [{"amount_sat": 2, "keyset": "B"}], "keysets_ppk": {"A": 0}},
-            {"target_sat": 1, "notes": [{}] * 19, "keysets_ppk": {"A": 0}},
+            {"target_sat": 1, "notes": [{}] * 33, "keysets_ppk": {"A": 0}},
         ]:
             with self.subTest(case=case), self.assertRaises(ValueError):
                 parse_case(case)
@@ -73,6 +73,18 @@ class SwapBenchTests(unittest.TestCase):
             expected = min(ranks, default=None)
             result = best_selection(notes, target)
             self.assertEqual(result.rank() if result else None, expected)
+
+    def test_combines_fractional_fees_across_halves(self):
+        # Fees of 600 and 400 ppk fit in one sat. Charging each half a
+        # whole sat, or minimizing raw ppk ahead of change, misses (1, 3).
+        notes = [Note(8, 600), Note(32, 250), Note(8, 400), Note(32, 250)]
+        self.assertEqual(best_selection(notes, 15).rank(), (1, 0, 2, (1, 3)))
+
+    def test_full_size_with_equal_candidates(self):
+        case = {"target_sat": 15, "notes": [{"keyset": "A", "amount_sat": 1}] * 32,
+                "keysets_ppk": {"A": 50}}
+        notes, target = parse_case(case)
+        self.assertEqual(best_selection(notes, target).rank(), (1, 0, 16, tuple(range(1, 17))))
 
     def test_command_line_status_and_json(self):
         command = [sys.executable, "-B", str(ROOT / "swap_bench.py")]

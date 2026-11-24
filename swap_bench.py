@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+from bisect import bisect_right
 from dataclasses import asdict, dataclass
 from itertools import combinations
 from pathlib import Path
@@ -42,8 +43,8 @@ def parse_case(data):
     for name, rate in keysets.items():
         integer(rate, 0, f"keysets_ppk.{name}")
     rows = data.get("notes")
-    if not isinstance(rows, list) or len(rows) > 18:
-        raise ValueError("notes must be an array with at most 18 entries")
+    if not isinstance(rows, list) or len(rows) > 32:
+        raise ValueError("notes must be an array with at most 32 entries")
     notes = []
     for position, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
@@ -69,16 +70,56 @@ def evaluate(notes, target, positions):
     return Selection(positions, total, ppk, fee, total - fee - target)
 
 
+def half_selections(notes, positions):
+    return [evaluate(notes, 0, subset) for size in range(len(positions) + 1)
+            for subset in combinations(positions, size)]
+
+
+def net_ppk(selection):
+    # Keep the fractional fee until both halves of the swap have been combined.
+    return 1000 * selection.input_sat - selection.fee_ppk
+
+
 def best_selection(notes, target):
-    # Enumerate all subsets so the result can serve as an independent benchmark.
-    # Only the best feasible subset is retained in memory.
+    middle = len(notes) // 2
+    left = sorted(half_selections(notes, range(1, middle + 1)), key=net_ppk)
+    right = sorted(half_selections(notes, range(middle + 1, len(notes) + 1)),
+                   key=net_ppk, reverse=True)
+    rates = sorted({r.fee_ppk for r in right})
+    # Fenwick tree: each block stores the right half with the lowest face
+    # value, then fewest notes, then earliest positions for its fee range.
+    blocks = [None] * (len(rates) + 1)
+    next_right = 0
+    lowest_fee = rates[-1]
     best = None
-    positions = range(1, len(notes) + 1)
-    for size in range(1, len(notes) + 1):
-        for subset in combinations(positions, size):
-            candidate = evaluate(notes, target, subset)
-            if candidate.change_sat >= 0 and (best is None or candidate.rank() < best.rank()):
-                best = candidate
+    for first in left:
+        required_net = 1000 * target - net_ppk(first)
+        while next_right < len(right) and net_ppk(right[next_right]) >= required_net:
+            other = right[next_right]
+            next_right += 1
+            lowest_fee = min(lowest_fee, other.fee_ppk)
+            rank = other.input_sat, len(other.positions), other.positions
+            index = bisect_right(rates, other.fee_ppk)
+            while index < len(blocks):
+                if blocks[index] is None or rank < blocks[index]:
+                    blocks[index] = rank
+                index += index & -index
+        if not next_right:
+            continue
+
+        # This is the cheapest rounded fee possible for this left half. All
+        # right halves within its budget tie on fee, so minimizing face value
+        # minimizes change as well. The prefix query includes every such half.
+        fee_sat = (first.fee_ppk + lowest_fee + 999) // 1000
+        index = bisect_right(rates, 1000 * fee_sat - first.fee_ppk)
+        chosen = None
+        while index:
+            if blocks[index] is not None and (chosen is None or blocks[index] < chosen):
+                chosen = blocks[index]
+            index -= index & -index
+        candidate = evaluate(notes, target, first.positions + chosen[2])
+        if best is None or candidate.rank() < best.rank():
+            best = candidate
     return best
 
 
