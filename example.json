@@ -1,0 +1,12 @@
+{
+  "target_sat": 15,
+  "keysets_ppk": {"A": 1500, "B": 100},
+  "notes": [
+    {"amount_sat": 16, "keyset": "A"},
+    {"amount_sat": 8, "keyset": "B"},
+    {"amount_sat": 8, "keyset": "B"},
+    {"amount_sat": 4, "keyset": "B"},
+    {"amount_sat": 2, "keyset": "B"},
+    {"amount_sat": 1, "keyset": "B"}
+  ]
+}
